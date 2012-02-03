@@ -1,0 +1,133 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+use constant OK			=> 0;
+use constant WARNING	=> 1;
+use constant CRITICAL	=> 2;
+use constant UNKNOWN	=> 3;
+use constant DEPENDENT	=> 4;
+
+use Getopt::Long;
+use Pod::Usage;
+
+use Digest::MD5;
+use Timer::Simple;
+use Net::Kestrel;
+use JSON;
+
+my $help		= undef;
+my $khost		= undef;
+my $queue		= undef;
+my $statement	= undef;
+my $expect		= undef;
+my $warn		= undef;
+my $crit		= undef;
+
+Getopt::Long::Configure('bundling');
+GetOptions(
+	"h"		=> \$help,		"help"			=> \$help,
+	"k=s"	=> \$khost,		"kestrel"		=> \$khost,
+	"q=s"	=> \$queue,		"queue=s"		=> \$queue,
+	"s=s"	=> \$statement,	"statement=s"	=> \$statement,
+	"e=s"	=> \$expect,	"expect=s"		=> \$expect,
+	"w=i"	=> \$warn,		"warning=s"		=> \$warn,
+	"c=i"	=> \$crit,		"critical=s"	=> \$crit);
+
+$crit = 10	unless defined $crit;
+$warn = 5	unless defined $warn;
+
+pod2usage({ -exitval => UNKNOWN })
+	if defined $help;
+
+pod2usage({ -exitval => UNKNOWN, -msg => 'kestrel host, kestrel queue and bullfinch statement are required' })
+	if not ($khost and $queue and $statement);
+
+pod2usage({ -exitval => UNKNOWN, -msg => 'warning threshold must not exceed the critical threshold' })
+	if $warn > $crit;
+
+my $md5 = new Digest::MD5;
+
+$md5->add($queue);
+$md5->add($statement);
+$md5->add(time);
+$md5->add($$);
+
+my $rqueue	= 'nagios-check-response-' . $md5->hexdigest;
+my $req		= { statement => $statement, response_queue => $rqueue };
+
+my $timer	= new Timer::Simple;
+my $kestrel	= new Net::Kestrel host => $khost;
+my $json	= new JSON;
+
+$kestrel->put($queue => $json->encode($req));
+$timer->start;
+
+my $status	= OK;
+my $res		= $kestrel->get($rqueue, $crit * 1000);
+my $text	= 'OK: response time: ' . $timer->elapsed . 's';
+
+$timer->stop;
+
+$kestrel->confirm($rqueue, 1) if $res;
+
+if ($timer->elapsed > $warn) {
+	$status	= WARNING;
+	$text	= 'WARNING: response time: ' . $timer->elapsed . 's';
+}
+
+if ($timer->elapsed > $crit) {
+	$status	= CRITICAL;
+	$text	= 'CRITICAL: response time: ' . $timer->elapsed . 's';
+}
+
+if ($expect and $res !~ /$expect/) {
+	$status	= CRITICAL;
+	$text	= "CRITICAL: expected $expect; received $res";
+}
+
+print "$text\n";
+
+exit $status;
+
+__END__
+
+=head1 NAME
+
+check_bullfinch - nagios plugin to check on bullfinch instances
+
+=head1 SYNOPSIS
+
+   -k (--kestrel)    address/hostname of the kestrel instance
+   -q (--queue)      kestrel queue name to post to
+   -s (--statement)  statement to execute via bullfinch
+   -e (--expect)     string to expect in the response
+   -w (--warning)    timeout threshold for warning state (ms)
+   -c (--critical)   timeout threshold for critical state (ms)
+   -h (--help)       usage help
+
+=head1 LICENSE
+
+Copyright (c) 2012 Infinity Interactive
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+
+=head1 AUTHOR
+
+Mike Eldridge <diz@cpan.org>
+
+=cut
+
