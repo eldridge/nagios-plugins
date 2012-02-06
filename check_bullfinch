@@ -71,6 +71,7 @@ my $text	= 'OK: response time: ' . $timer->elapsed . 's';
 $timer->stop;
 
 $kestrel->confirm($rqueue, 1) if $res;
+$kestrel->delete($rqueue);
 
 if ($timer->elapsed > $warn) {
 	$status	= WARNING;
