@@ -54,7 +54,7 @@ $md5->add($statement);
 $md5->add(time);
 $md5->add($$);
 
-my $rqueue	= 'nagios-check-response-' . $md5->hexdigest;
+my $rqueue	= "nagios-$queue-response-" . $md5->hexdigest;
 my $req		= { statement => $statement, response_queue => $rqueue };
 
 my $timer	= new Timer::Simple;
