@@ -14,14 +14,12 @@ use Pod::Usage;
 
 use Digest::MD5;
 use Timer::Simple;
-use Net::Kestrel;
-use JSON;
+use Net::Bullfinch;
 
 my $help		= undef;
 my $khost		= undef;
 my $queue		= undef;
 my $statement	= undef;
-my $expect		= undef;
 my $warn		= undef;
 my $crit		= undef;
 
@@ -31,7 +29,6 @@ GetOptions(
 	"k=s"	=> \$khost,		"kestrel"		=> \$khost,
 	"q=s"	=> \$queue,		"queue=s"		=> \$queue,
 	"s=s"	=> \$statement,	"statement=s"	=> \$statement,
-	"e=s"	=> \$expect,	"expect=s"		=> \$expect,
 	"w=i"	=> \$warn,		"warning=s"		=> \$warn,
 	"c=i"	=> \$crit,		"critical=s"	=> \$crit);
 
@@ -54,24 +51,27 @@ $md5->add($statement);
 $md5->add(time);
 $md5->add($$);
 
-my $rqueue	= "nagios-$queue-response-" . $md5->hexdigest;
-my $req		= { statement => $statement, response_queue => $rqueue };
+my $req		= { statement => $statement };
 
 my $timer	= new Timer::Simple;
-my $kestrel	= new Net::Kestrel host => $khost;
-my $json	= new JSON;
+my $bullfinch = new Net::Bullfinch(
+    host => $khost,
+    response_prefix => "nagios-$queue-response-",
+    timeout => $crit * 1000,
+    debug => 1
+);
 
-$kestrel->put($queue => $json->encode($req));
 $timer->start;
 
-my $status	= OK;
-my $res		= $kestrel->get($rqueue, $crit * 1000);
-my $text	= 'OK: response time: ' . $timer->elapsed . 's';
-
+my $items = $bullfinch->send(
+    request_queue => $queue,
+    request => $req,
+    response_queue_suffix => $md5->hexdigest
+);
 $timer->stop;
 
-$kestrel->confirm($rqueue, 1) if $res;
-$kestrel->delete($rqueue);
+my $status	= OK;
+my $text	= 'OK: response time: ' . $timer->elapsed . 's';
 
 if ($timer->elapsed > $warn) {
 	$status	= WARNING;
@@ -81,11 +81,6 @@ if ($timer->elapsed > $warn) {
 if ($timer->elapsed > $crit) {
 	$status	= CRITICAL;
 	$text	= 'CRITICAL: response time: ' . $timer->elapsed . 's';
-}
-
-if ($expect and $res !~ /$expect/) {
-	$status	= CRITICAL;
-	$text	= "CRITICAL: expected $expect; received $res";
 }
 
 print "$text\n";
@@ -103,7 +98,6 @@ check_bullfinch - nagios plugin to check on bullfinch instances
    -k (--kestrel)    address/hostname of the kestrel instance
    -q (--queue)      kestrel queue name to post to
    -s (--statement)  statement to execute via bullfinch
-   -e (--expect)     string to expect in the response
    -w (--warning)    timeout threshold for warning state (ms)
    -c (--critical)   timeout threshold for critical state (ms)
    -h (--help)       usage help
