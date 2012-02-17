@@ -12,8 +12,9 @@ use constant DEPENDENT	=> 4;
 use Getopt::Long;
 use Pod::Usage;
 
-use Timer::Simple;
 use Net::Ostrich;
+use Try::Tiny;
+
 
 my $help		= undef;
 my $khost		= undef;
@@ -40,8 +41,14 @@ pod2usage({ -exitval => UNKNOWN, -msg => 'kestrel host, stat, warn and crit are 
 pod2usage({ -exitval => UNKNOWN, -msg => 'warning threshold must not exceed the critical threshold' })
 	if $warn > $crit;
 
-my $ostrich = Net::Ostrich->new(host => $khost, port => 2223);
-my $stats = $ostrich->stats;
+my $stats = {};
+try {
+    my $ostrich = Net::Ostrich->new(host => $khost, port => 2223);
+    $stats = $ostrich->stats;
+} catch {
+    print "CRITICAL: $stat: 0\n";
+    exit CRITICAL;
+};
 
 my %qs;
 my %global;
@@ -66,8 +73,12 @@ foreach my $key (keys %{ $stats->{counters}}) {
 
 my $value = undef;
 if(defined($queue)) {
+    if(!exists($qs{$queue})) {
+        # Ack, no queue at all!
+        print "CRITICAL: $queue\.$stat: 0\n";
+        exit CRITICAL;
+    }
 
-    
     if(!exists($qs{$queue}->{$stat})) {
         pod2usage({ -exitval => UNKNOWN, -msg => 'unknown stat: '.$stat });
     } else {
