@@ -1,0 +1,141 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+use constant OK			=> 0;
+use constant WARNING	=> 1;
+use constant CRITICAL	=> 2;
+use constant UNKNOWN	=> 3;
+use constant DEPENDENT	=> 4;
+
+use Getopt::Long;
+use Pod::Usage;
+
+use Timer::Simple;
+use Net::Ostrich;
+
+my $help		= undef;
+my $khost		= undef;
+my $queue		= undef;
+my $stat        = undef;
+my $warn		= undef;
+my $crit		= undef;
+
+Getopt::Long::Configure('bundling');
+GetOptions(
+	"h"		=> \$help,		"help"			=> \$help,
+	"k=s"	=> \$khost,		"kestrel"		=> \$khost,
+    "s=s"   => \$stat,      "stat"          => \$stat,
+	"q=s"	=> \$queue,		"queue=s"		=> \$queue,
+	"w=i"	=> \$warn,		"warning=s"		=> \$warn,
+	"c=i"	=> \$crit,		"critical=s"	=> \$crit);
+
+pod2usage({ -exitval => UNKNOWN })
+	if defined $help;
+
+pod2usage({ -exitval => UNKNOWN, -msg => 'kestrel host, stat, warn and crit are required' })
+	if not ($khost and $stat and $warn and $crit);
+
+pod2usage({ -exitval => UNKNOWN, -msg => 'warning threshold must not exceed the critical threshold' })
+	if $warn > $crit;
+
+my $ostrich = Net::Ostrich->new(host => $khost, port => 2223);
+my $stats = $ostrich->stats;
+
+my %qs;
+my %global;
+
+# Get Gauges
+foreach my $key (keys %{ $stats->{gauges} }) {
+    if($key =~ /q\/([a-zA-Z-0-9]*)\/(\w+)/) {
+        $qs{$1}->{$2} = $stats->{gauges}->{$key};
+    } else {
+        $global{$key} = $stats->{gauges}->{$key};
+    }
+}
+
+# Now Counters
+foreach my $key (keys %{ $stats->{counters}}) {
+    if($key =~ /q\/([a-zA-Z-0-9]*)\/(\w+)/) {
+        $qs{$1}->{$2} = $stats->{counters}->{$key};
+    } else {
+        $global{$key} = $stats->{counters}->{$key};
+    }
+}
+
+my $value = undef;
+if(defined($queue)) {
+
+    
+    if(!exists($qs{$queue}->{$stat})) {
+        pod2usage({ -exitval => UNKNOWN, -msg => 'unknown stat: '.$stat });
+    } else {
+        $value = $qs{$queue}->{$stat};
+    }
+} else {
+    if(!exists($global{$stat})) {
+        pod2usage({ -exitval => UNKNOWN, -msg => 'unknown stat: '.$stat });
+    } else {
+        $value = $global{$stat};
+    }
+}
+
+my $metric = defined($queue) ? "$queue\.$stat" : $stat;
+
+my $status	= OK;
+my $text  = "OK: $metric: $value";
+
+if ($value > $warn) {
+  $status = WARNING;
+  $text   = "WARNING: $metric: $value";
+}
+
+if ($value > $crit) {
+  $status = CRITICAL;
+  $text   = "CRITICAL: $metric: $value";
+}
+
+print "$text\n";
+
+exit $status;
+
+__END__
+
+=head1 NAME
+
+check_kestrel_stat - nagios plugin to check on kestrel global or queue stats
+
+=head1 SYNOPSIS
+
+   -k (--kestrel)    address/hostname of the kestrel instance
+   -q (--queue)      kestrel queue name to post to
+   -s (--stat)       stat to check
+   -w (--warning)    threshold for warning state (ms)
+   -c (--critical)   threshold for critical state (ms)
+   -h (--help)       usage help
+
+=head1 LICENSE
+
+Copyright (c) 2012 Infinity Interactive
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+
+=head1 AUTHOR
+
+Cory Watson <gphat@cpan.org>
+
+=cut
+
