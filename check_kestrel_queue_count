@@ -1,0 +1,114 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+use constant OK			=> 0;
+use constant WARNING	=> 1;
+use constant CRITICAL	=> 2;
+use constant UNKNOWN	=> 3;
+use constant DEPENDENT	=> 4;
+
+use Getopt::Long;
+use Pod::Usage;
+
+use Net::Ostrich;
+use Try::Tiny;
+
+my $help		= undef;
+my $khost		= undef;
+my $queue		= undef;
+my $stat        = undef;
+my $warn		= undef;
+my $crit		= undef;
+
+Getopt::Long::Configure('bundling');
+GetOptions(
+	"h"		=> \$help,		"help"			=> \$help,
+	"k=s"	=> \$khost,		"kestrel"		=> \$khost,
+	"w=i"	=> \$warn,		"warning=s"		=> \$warn,
+	"c=i"	=> \$crit,		"critical=s"	=> \$crit);
+
+pod2usage({ -exitval => UNKNOWN })
+	if defined $help;
+
+pod2usage({ -exitval => UNKNOWN, -msg => 'kestrel host, warn and crit are required' })
+	if not ($khost and $warn and $crit);
+
+pod2usage({ -exitval => UNKNOWN, -msg => 'warning threshold must not exceed the critical threshold' })
+	if $warn > $crit;
+
+my $stats = {};
+try {
+    my $ostrich = Net::Ostrich->new(host => $khost, port => 2223);
+    $stats = $ostrich->stats;
+} catch {
+    print "CRITICAL: count: 0\n";
+    exit CRITICAL;
+};
+
+my %seen;
+
+# Get Gauges
+foreach my $key (keys %{ $stats->{gauges} }) {
+    if($key =~ /q\/([a-zA-Z-0-9]*)\/(\w+)/) {
+        $seen{$1} = 1 unless exists($seen{$1});
+    }
+}
+
+my $count = scalar(keys %seen);
+
+my $status    = OK;
+my $text  = "OK: count: $count";
+
+if ($count > $warn) {
+  $status = WARNING;
+  $text   = "WARNING: count: $count";
+}
+
+if ($count > $crit) {
+  $status = CRITICAL;
+  $text   = "CRITICAL: count: $count";
+}
+
+print "$text\n";
+
+exit $status;
+
+__END__
+
+=head1 NAME
+
+check_kestrel_queue_count - nagios plugin to check on kestrel queue count
+
+=head1 SYNOPSIS
+
+   -k (--kestrel)    address/hostname of the kestrel instance
+   -w (--warning)    threshold for warning state (ms)
+   -c (--critical)   threshold for critical state (ms)
+   -h (--help)       usage help
+
+=head1 LICENSE
+
+Copyright (c) 2012 Infinity Interactive
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+
+=head1 AUTHOR
+
+Cory Watson <gphat@cpan.org>
+
+=cut
+
