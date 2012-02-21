@@ -18,6 +18,7 @@ use Try::Tiny;
 my $help		= undef;
 my $khost		= undef;
 my $queue		= undef;
+my $exist		= undef;
 my $stat        = undef;
 my $warn		= undef;
 my $crit		= undef;
@@ -28,6 +29,7 @@ GetOptions(
 	"k=s"	=> \$khost,		"kestrel=s"		=> \$khost,
     "s=s"   => \$stat,      "stat=s"        => \$stat,
 	"q=s"	=> \$queue,		"queue=s"		=> \$queue,
+	"e"		=> \$exist,		"exist"			=> \$exist,
 	"w=i"	=> \$warn,		"warning=i"		=> \$warn,
 	"c=i"	=> \$crit,		"critical=i"	=> \$crit);
 
@@ -72,9 +74,9 @@ foreach my $key (keys %{ $stats->{counters}}) {
 
 my $value = undef;
 if(defined($queue)) {
-    if(!exists($qs{$queue})) {
+    if($exist and !exists($qs{$queue})) {
         # Ack, no queue at all!
-        print "CRITICAL: $queue\.$stat: 0\n";
+        print "CRITICAL: queue $queue does not exist\n";
         exit CRITICAL;
     }
 
@@ -120,6 +122,7 @@ check_kestrel_stat - nagios plugin to check on kestrel global or queue stats
 
    -k (--kestrel)    address/hostname of the kestrel instance
    -q (--queue)      kestrel queue name to post to
+   -e (--exist)      enforce queue existence
    -s (--stat)       stat to check
    -w (--warning)    threshold for warning state (ms)
    -c (--critical)   threshold for critical state (ms)
