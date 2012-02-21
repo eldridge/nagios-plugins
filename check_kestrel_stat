@@ -25,11 +25,11 @@ my $crit		= undef;
 Getopt::Long::Configure('bundling');
 GetOptions(
 	"h"		=> \$help,		"help"			=> \$help,
-	"k=s"	=> \$khost,		"kestrel"		=> \$khost,
-    "s=s"   => \$stat,      "stat"          => \$stat,
+	"k=s"	=> \$khost,		"kestrel=s"		=> \$khost,
+    "s=s"   => \$stat,      "stat=s"        => \$stat,
 	"q=s"	=> \$queue,		"queue=s"		=> \$queue,
-	"w=i"	=> \$warn,		"warning=s"		=> \$warn,
-	"c=i"	=> \$crit,		"critical=s"	=> \$crit);
+	"w=i"	=> \$warn,		"warning=i"		=> \$warn,
+	"c=i"	=> \$crit,		"critical=i"	=> \$crit);
 
 pod2usage({ -exitval => UNKNOWN })
 	if defined $help;
