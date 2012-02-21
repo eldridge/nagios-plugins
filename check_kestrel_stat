@@ -124,8 +124,8 @@ check_kestrel_stat - nagios plugin to check on kestrel global or queue stats
    -q (--queue)      kestrel queue name to post to
    -e (--exist)      enforce queue existence
    -s (--stat)       stat to check
-   -w (--warning)    threshold for warning state (ms)
-   -c (--critical)   threshold for critical state (ms)
+   -w (--warning)    threshold for warning state
+   -c (--critical)   threshold for critical state
    -h (--help)       usage help
 
 =head1 LICENSE
