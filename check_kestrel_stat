@@ -45,8 +45,8 @@ try {
     my $ostrich = Net::Ostrich->new(host => $khost, port => 2223);
     $stats = $ostrich->stats;
 } catch {
-    print "CRITICAL: $stat: 0\n";
-    exit CRITICAL;
+    print "UNKNOWN: exception trying to fetch stats: $_\n";
+    exit UNKNOWN;
 };
 
 my %qs;
