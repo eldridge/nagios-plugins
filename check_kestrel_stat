@@ -74,16 +74,21 @@ foreach my $key (keys %{ $stats->{counters}}) {
 
 my $value = undef;
 if(defined($queue)) {
-    if($exist and !exists($qs{$queue})) {
-        # Ack, no queue at all!
-        print "CRITICAL: queue $queue does not exist\n";
-        exit CRITICAL;
-    }
-
-    if(!exists($qs{$queue}->{$stat})) {
-        pod2usage({ -exitval => UNKNOWN, -msg => 'unknown stat: '.$stat });
-    } else {
-        $value = $qs{$queue}->{$stat};
+    if(exists($qs{$queue})) {
+		if(!exists($qs{$queue}->{$stat})) {
+			pod2usage({ -exitval => UNKNOWN, -msg => 'unknown stat: '.$stat });
+		} else {
+			$value = $qs{$queue}->{$stat};
+		}
+	} else {
+		# Ack, no queue at all!
+		if ($exist) {
+			print "CRITICAL: queue $queue does not exist\n";
+			exit CRITICAL;
+		} else {
+			print "OK: queue $queue does not exist\n";
+			exit OK;
+		}
     }
 } else {
     if(!exists($global{$stat})) {
