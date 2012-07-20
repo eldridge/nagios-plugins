@@ -1,0 +1,317 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+use constant OK			=> 0;
+use constant WARNING	=> 1;
+use constant CRITICAL	=> 2;
+use constant UNKNOWN	=> 3;
+use constant DEPENDENT	=> 4;
+
+use Getopt::Long;
+use Pod::Usage;
+
+use DBI;
+
+my $help		= undef;
+my $dsn			= undef;
+my $attrs		= { PrintError => 0 };
+my $username	= undef;
+my $password	= undef;
+my $query		= undef;
+my @params		= ();
+my $equiv		= undef;
+my $regex		= undef;
+my $field		= undef;
+my $rows		= undef;
+my $low			= undef;
+my $warn		= undef;
+my $crit		= undef;
+my @on_conn		= ();
+
+Getopt::Long::Configure('bundling');
+GetOptions(
+	"h"		=> \$help,		"help"			=> \$help,
+	"d=s"	=> \$dsn,		"dsn=s"			=> \$dsn,
+	"u=s"	=> \$username,	"username=s"	=> \$username,
+	"p=s"	=> \$password,	"password=s"	=> \$password,
+	"a=s%"	=> \$attrs,		"attr=s%"		=> \$attrs,
+	"o=s"	=> \@on_conn,	"on-connect=s"	=> \@on_conn,
+	"q=s"	=> \$query,		"query=s"		=> \$query,
+	"P=s"	=> \@params,	"param=s"		=> \@params,
+	"m=s"	=> \$regex,		"match=s"		=> \$regex,
+	"e=s"	=> \$equiv,		"equiv=s"		=> \$equiv,
+	"r"		=> \$rows,		"rows"			=> \$rows,
+	"f=s"	=> \$field,		"field=s"		=> \$field,
+	"l"		=> \$low,		"low"			=> \$low,
+	"w=i"	=> \$warn,		"warning=i"		=> \$warn,
+	"c=i"	=> \$crit,		"critical=i"	=> \$crit);
+
+pod2usage({ -exitval => UNKNOWN })
+	if defined $help;
+
+pod2usage({ -exitval => UNKNOWN, -msg => 'DSN is required' })
+	if not $dsn;
+
+pod2usage({ -exitval => UNKNOWN, -msg => 'username and password are required' })
+	if not defined $username or not defined $password;
+
+pod2usage({ -exitval => UNKNOWN, -msg => 'warning/critical thresholds and equivalency are mutually exclusive' })
+	if ($warn or $crit) and ($equiv or $regex);
+
+pod2usage({ -exitval => UNKNOWN, -msg => 'row counts and field comparisons are mutually exclusive' })
+	if $rows and $field;
+
+pod2usage({ -exitval => UNKNOWN, -msg => 'a field was specified, but no comparison was given' })
+	if $field and not ($equiv or $regex or $warn or $crit);
+
+pod2usage({ -exitval => UNKNOWN, -msg => 'warning threshold must not exceed the critical threshold' })
+	if defined $warn and defined $crit and $warn > $crit;
+
+pod2usage({ -exitval => UNKNOWN, -msg => 'something was asked to be examined, but no conditions were given' })
+	if ($rows or $field) and not ($equiv or $regex or $warn or $crit);
+
+pod2usage({ -exitval => UNKNOWN, -msg => 'conditions were given, but nothing was specified to examine' })
+	if ($equiv or $regex or $warn or $crit) and not ($rows or $field);
+
+my $states = { OK, 'OK', WARNING, 'WARNING', CRITICAL, 'CRITICAL' };
+
+my $subjects =
+{
+	subject_num_rows => sub
+	{
+		my $sth = shift;
+
+		my $rows = $sth->rows;
+
+	print "ROWS=$rows\n";
+
+		return ($rows, "$rows rows");
+	},
+
+	subject_field => sub
+	{
+		my $sth = shift;
+
+		my $row = $sth->fetchrow_hashref || {};
+		my $val = $row->{$field};
+		my $des = defined $val ? "$field=\"$val\"" : "$field is undefined";
+
+		return ($val, $des);
+	},
+
+	subject_expr => sub
+	{
+		my $sth = shift;
+
+		my $row = $sth->fetchrow_arrayref || [];
+		my $val = $row->[0];
+		my $des = 'expression is ' . (defined $val ? "\"$val\"" : "undefined");
+
+		return ($val, $des);
+	}
+};
+
+my $tests =
+{
+	test_equiv => sub
+	{
+		my $status = $_[0] eq $_[1] ? OK : CRITICAL;
+
+		return [ $status => "expected \"$equiv\"" ];
+	},
+
+	test_regex => sub
+	{
+		my $status = $_[0] =~ /$_[1]/ ? OK : CRITICAL;
+
+		return [ $status => "expected /$regex/" ];
+	},
+
+	test_threshold_high => sub
+	{
+		my $status	= OK;
+		my $text	= "below the warning threshold of $warn";
+
+		if ($_[0] > $_[1]) {
+			$status	= WARNING;
+			$text	= "exceeds warning threshold of $warn";
+		}
+
+		if ($_[0] > $_[2]) {
+			$status	= CRITICAL;
+			$text	= "exceeds critical threshold of $crit";
+		}
+
+		return [ $status => $text ];
+	},
+
+	test_threshold_low => sub
+	{
+		my $status	= OK;
+		my $text	= "above the warning threshold of $warn";
+
+		if ($_[0] < $_[1]) {
+			$status	= WARNING;
+			$text	= "below warning threshold of $warn";
+		}
+
+		if ($_[0] < $_[2]) {
+			$status	= CRITICAL;
+			$text	= "below critical threshold of $crit";
+		}
+
+		return [ $status => $text ];
+	},
+
+	test_expr => sub
+	{
+		my $status	= $_[0] ? OK : CRITICAL;
+		my $text	= 'expression was ' . $_[0] ? 'true' : 'false';
+
+		return [ $status => $text ];
+	}
+};
+
+my $dbh		= DBI->connect($dsn, $username, $password, $attrs);
+my $state	= undef;
+
+if ($dbh) {
+	$state = [ OK => 'connected to database' ];
+
+	$dbh->do($_) foreach @on_conn;
+
+	if ($query) {
+		if (my $sth = $dbh->prepare($query)) {
+			if (my $res = $sth->execute(@params)) {
+				$state = test($sth);
+			} else {
+				$state = [ CRITICAL, 'query execution failed: ' . $dbh->errstr ];
+			}
+		} else {
+			$state = [ CRITICAL, 'query preparation failed: ' . $dbh->errstr ];
+		}
+	}
+} else {
+	$state = [ CRITICAL, "unable to connect to database: $DBI::errstr" ];
+}
+
+sub test
+{
+	my $sth = shift;
+
+	my $val = undef;
+	my $des = undef;
+
+	my $state;
+
+	($val, $des) = $subjects->{subject_num_rows}->($sth)
+		if $rows;
+
+	($val, $des) = $subjects->{subject_field}->($sth)
+		if $field;
+
+	($val, $des) = $subjects->{subject_expr}->($sth)
+		if not defined $rows and not defined $field;
+
+	$state = $tests->{test_equiv}->($val, $equiv)
+		if $equiv;
+
+	$state = $tests->{test_regex}->($val, $regex)
+		if $regex;
+
+	$state = $tests->{test_threshold_high}->($val, $warn, $crit)
+		if not $low and defined $warn and defined $crit;
+
+	$state = $tests->{test_threshold_low}->($val, $warn, $crit)
+		if $low and defined $warn and defined $crit;
+
+	$state = $tests->{test_expr}->($val)
+		if not defined $equiv
+		and not defined $regex
+		and not defined $warn
+		and not defined $crit;
+
+	$state->[1] = $des;
+
+	return $state;
+}
+
+print "$states->{$state->[0]}: $state->[1]\n";
+
+exit $state->[0];
+
+__END__
+
+=head1 NAME
+
+check_bullfinch - nagios plugin to check on bullfinch instances
+
+=head1 SYNOPSIS
+
+   -d (--dsn)        data source name in standard DBI format
+   -u (--username)   username to use when authenticating to the database
+   -p (--password)   password to use when authenticating to the database
+   -a (--attr)       attribute handle key/value specification
+                     (this option may be used multiple times)
+   -o (--on-connect) statement to execute upon connecting to the database
+                     (this option may be used multiple times)
+   -q (--query)      query to issue against the database
+   -P (--param)      parameter to use with statement placeholders
+                     (this option may be used multiple times)
+   -r (--rows)       flag specifying to consider only the row count
+   -f (--field)      field to consider in the result set
+   -e (--equiv)      value to test equivalency against row count or field value
+   -m (--match)      regex to match against row count or field value
+   -w (--warning)    threshold for warning state
+   -c (--critical)   threshold for critical state
+   -l (--low)        flag indicating thresholds given are for lower bounds
+   -h (--help)       usage help
+
+The important things to remember are:
+
+=over 4
+
+=item *
+
+The B<rows> and B<field> options define the value to examine; they are
+mutually exclusive.
+
+=item *
+
+The B<equiv>, B<regex>, and B<warning>/B<critical> options define the
+test to evaluate; they are also mutually exclusive.
+
+=item *
+
+If neither value nor test are specified, the plugin will report OK upon
+successful execution of the query and CRITICAL upon failure.  If one is
+specified and not the other, an error will occur.
+
+=back
+
+=head1 LICENSE
+
+Copyright (c) 2012 Infinity Interactive
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+
+=head1 AUTHOR
+
+Mike Eldridge <diz@cpan.org>
+
+=cut
+
